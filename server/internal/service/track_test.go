@@ -457,6 +457,43 @@ func TestTrackService_Vote_License2_OutOfRange_Returns403(t *testing.T) {
 	}
 }
 
+// Radius is stored in metres. A voter 340 km away must be rejected even when
+// the numeric radius value (1000) is large, otherwise the metre value is being
+// compared against a kilometre distance and geofencing is bypassed.
+func TestTrackService_Vote_License2_MetersRadius_OutOfRange(t *testing.T) {
+	eventID := uuid.New()
+	now := time.Now()
+	eventRepo := &mockEventRepoForTrack{
+		getAccessibleFn: func(_ context.Context, eID, _ uuid.UUID) (*model.Event, error) {
+			return license2Event(eID, 48.8566, 2.3522, 1000, now.Add(-time.Hour), now.Add(time.Hour)), nil
+		},
+	}
+	lat, lng := 51.5074, -0.1278 // London, ~340 km from a 1000 m (1 km) radius Paris event
+	if !errors.Is(service.NewTrackService(eventRepo, &mockTrackRepo{}).Vote(context.Background(), eventID, uuid.New(), uuid.New(), model.VoteRequest{Lat: &lat, Lng: &lng}), service.ErrOutOfRange) {
+		t.Error("expected ErrOutOfRange for a voter 340 km outside a 1000 m radius")
+	}
+}
+
+// A voter ~1 km from the event with a 2000 m (2 km) radius is inside the zone
+// and must be accepted; guards against an over-aggressive metre conversion.
+func TestTrackService_Vote_License2_MetersRadius_InRange_Succeeds(t *testing.T) {
+	eventID, trackID := uuid.New(), uuid.New()
+	now := time.Now()
+	eventRepo := &mockEventRepoForTrack{
+		getAccessibleFn: func(_ context.Context, eID, _ uuid.UUID) (*model.Event, error) {
+			return license2Event(eID, 48.8566, 2.3522, 2000, now.Add(-time.Hour), now.Add(time.Hour)), nil
+		},
+	}
+	trackRepo := &mockTrackRepo{
+		getByIDFn: func(_ context.Context, tID, eID uuid.UUID) (*model.Track, error) { return sampleTrack(eID, tID), nil },
+		voteFn:    func(_ context.Context, _, _ uuid.UUID) error { return nil },
+	}
+	lat, lng := 48.8656, 2.3522 // ~1 km north of Paris, inside the 2 km radius
+	if err := service.NewTrackService(eventRepo, trackRepo).Vote(context.Background(), eventID, trackID, uuid.New(), model.VoteRequest{Lat: &lat, Lng: &lng}); err != nil {
+		t.Fatalf("expected success for a voter ~1 km inside a 2000 m radius, got %v", err)
+	}
+}
+
 func TestTrackService_Vote_License2_VotingClosed_Returns403(t *testing.T) {
 	eventID := uuid.New()
 	past := time.Now().Add(-2 * time.Hour)

@@ -120,7 +120,9 @@ func (s *trackService) enforceLicense(ctx context.Context, event *model.Event, c
 		if gps.Lat == nil || gps.Lng == nil {
 			return ErrMissingCoords
 		}
-		if dist := HaversineKm(*gps.Lat, *gps.Lng, *event.Lat, *event.Lng); dist > *event.Radius {
+		// event.Radius is stored in metres; HaversineKm returns kilometres.
+		radiusKm := *event.Radius / 1000.0
+		if dist := HaversineKm(*gps.Lat, *gps.Lng, *event.Lat, *event.Lng); dist > radiusKm {
 			return ErrOutOfRange
 		}
 		now := time.Now()

@@ -2,12 +2,16 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math/rand"
+	"time"
 
 	"music-room/internal/model"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -226,10 +230,65 @@ func (r *playlistRepository) RemoveTrack(ctx context.Context, playlistID, trackI
 	return tx.Commit(ctx)
 }
 
-// MoveTrack shifts affected rows and places the track at newPos.
-// Runs inside a serializable transaction so two concurrent moves on the same
-// playlist cannot interleave and corrupt the position order.
+// maxMoveRetries bounds how many times MoveTrack re-runs its transaction after
+// a serialization failure before giving up. moveRetryBaseBackoff is the base of
+// the exponential, jittered backoff applied between attempts so that conflicting
+// transactions do not immediately re-collide.
+const (
+	maxMoveRetries       = 5
+	moveRetryBaseBackoff = 2 * time.Millisecond
+)
+
+// MoveTrack shifts affected rows and places the track at newPos. The work runs
+// in a serializable transaction (see moveTrackTx), which Postgres may abort with
+// a serialization failure (SQLSTATE 40001) when two moves on the same playlist
+// interleave. Those aborts are expected and safe to retry, so we re-run the
+// transaction up to maxMoveRetries times instead of surfacing an error.
 func (r *playlistRepository) MoveTrack(ctx context.Context, playlistID, trackID uuid.UUID, newPos int) error {
+	return retryOnSerialization(maxMoveRetries, time.Sleep, func() error {
+		return r.moveTrackTx(ctx, playlistID, trackID, newPos)
+	})
+}
+
+// retryOnSerialization runs fn, retrying only on a Postgres serialization failure
+// (SQLSTATE 40001) up to maxAttempts times. Any other error (including a nil
+// result) is returned immediately. Between attempts it waits via sleep using an
+// exponential, jittered backoff so conflicting transactions spread out instead
+// of re-colliding. When all attempts fail it wraps the last error in
+// ErrSerializationFailed. sleep is injected so tests can run without delay.
+func retryOnSerialization(maxAttempts int, sleep func(time.Duration), fn func() error) error {
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		err = fn()
+		if err == nil || !isSerializationFailure(err) {
+			return err
+		}
+		if attempt < maxAttempts-1 {
+			sleep(serializationBackoff(attempt))
+		}
+	}
+	return fmt.Errorf("%w after %d attempts: %w", ErrSerializationFailed, maxAttempts, err)
+}
+
+// serializationBackoff returns the wait before the next retry: an exponentially
+// growing base (2ms, 4ms, 8ms, ...) plus a random jitter in [0, base) so that
+// transactions that conflicted do not wake up and retry at the same instant.
+func serializationBackoff(attempt int) time.Duration {
+	base := moveRetryBaseBackoff << attempt
+	return base + time.Duration(rand.Int63n(int64(base)))
+}
+
+// isSerializationFailure reports whether err is a Postgres serialization failure
+// (SQLSTATE 40001), which a serializable transaction may return under contention.
+func isSerializationFailure(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "40001"
+}
+
+// moveTrackTx performs a single attempt: it shifts affected rows and places the
+// track at newPos inside a serializable transaction so two concurrent moves on
+// the same playlist cannot interleave and corrupt the position order.
+func (r *playlistRepository) moveTrackTx(ctx context.Context, playlistID, trackID uuid.UUID, newPos int) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return err
@@ -288,3 +347,7 @@ func (r *playlistRepository) MoveTrack(ctx context.Context, playlistID, trackID 
 
 // ErrPositionOutOfRange is returned by MoveTrack when newPos exceeds the track count.
 var ErrPositionOutOfRange = fmt.Errorf("position out of range")
+
+// ErrSerializationFailed is returned by MoveTrack when the transaction still hits
+// a serialization failure after exhausting maxMoveRetries retries.
+var ErrSerializationFailed = errors.New("serialization failed after retries")

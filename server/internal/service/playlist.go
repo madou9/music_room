@@ -12,11 +12,12 @@ import (
 )
 
 var (
-	ErrPlaylistNotFound      = errors.New("playlist not found")
-	ErrPlaylistTrackNotFound = errors.New("track not found")
-	ErrEditNotAllowed        = errors.New("edit not allowed")
-	ErrDuplicateTrack        = errors.New("track already in playlist")
-	ErrInvalidPosition       = errors.New("position out of range")
+	ErrPlaylistNotFound       = errors.New("playlist not found")
+	ErrPlaylistTrackNotFound  = errors.New("track not found")
+	ErrEditNotAllowed         = errors.New("edit not allowed")
+	ErrDuplicateTrack         = errors.New("track already in playlist")
+	ErrInvalidPosition        = errors.New("position out of range")
+	ErrConcurrentModification = errors.New("the playlist is being edited concurrently, please retry")
 )
 
 type PlaylistService interface {
@@ -183,6 +184,8 @@ func (s *playlistService) MoveTrack(ctx context.Context, playlistID, callerID, t
 			return ErrPlaylistTrackNotFound
 		case errors.Is(err, repository.ErrPositionOutOfRange):
 			return ErrInvalidPosition
+		case errors.Is(err, repository.ErrSerializationFailed):
+			return ErrConcurrentModification
 		}
 		return err
 	}

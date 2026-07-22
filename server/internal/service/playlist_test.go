@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"music-room/internal/model"
+	"music-room/internal/repository"
 	"music-room/internal/service"
 
 	"github.com/google/uuid"
@@ -602,6 +603,25 @@ func TestPlaylistService_MoveTrack_NotAllowed_Returns403(t *testing.T) {
 	err := svc.MoveTrack(context.Background(), playlistID, uuid.New(), uuid.New(), 1)
 	if !errors.Is(err, service.ErrEditNotAllowed) {
 		t.Errorf("expected ErrEditNotAllowed, got %v", err)
+	}
+}
+
+func TestPlaylistService_MoveTrack_SerializationFailed_Returns503(t *testing.T) {
+	playlistID := uuid.New()
+
+	repo := &mockPlaylistRepo{
+		getAccessibleFn: func(_ context.Context, _, _ uuid.UUID) (*model.Playlist, error) {
+			return &model.Playlist{ID: playlistID, OwnerID: uuid.New(), License: 0}, nil
+		},
+		moveTrackFn: func(_ context.Context, _, _ uuid.UUID, _ int) error {
+			return repository.ErrSerializationFailed
+		},
+	}
+
+	svc := service.NewPlaylistService(repo)
+	err := svc.MoveTrack(context.Background(), playlistID, uuid.New(), uuid.New(), 1)
+	if !errors.Is(err, service.ErrConcurrentModification) {
+		t.Errorf("expected ErrConcurrentModification, got %v", err)
 	}
 }
 

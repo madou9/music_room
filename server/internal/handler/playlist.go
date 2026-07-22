@@ -321,6 +321,8 @@ func (h *PlaylistHandler) handleServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	case errors.Is(err, service.ErrInvalidPosition):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, service.ErrConcurrentModification):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"code": "CONCURRENT_MODIFICATION", "error": err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "an internal server error occurred"})
 	}
