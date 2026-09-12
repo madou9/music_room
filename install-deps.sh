@@ -310,7 +310,14 @@ if [ -x "$SDKMANAGER" ]; then
   # native builds that don't pin one themselves (e.g. the jni plugin, pulled
   # in transitively). Without it, externalNativeBuild fails with CXX1416
   # "Could not find Ninja on PATH or in SDK CMake bin folders".
-  for pkg in "platform-tools" "platforms;android-${LATEST_PLATFORM}" "build-tools;${LATEST_PLATFORM}.0.0" "cmake;3.10.2.4988404"; do
+  #
+  # platforms;android-36 + build-tools;28.0.3 are pinned as a fallback:
+  # "latest" (above) can point at a version not yet mirrored on the repo
+  # (e.g. android-37 at the time of writing), and sdkmanager treats a failed
+  # package install as non-fatal — so without a known-good fallback, a bad
+  # "latest" guess silently leaves zero platforms installed and `flutter
+  # doctor` reports "No valid Android SDK platforms found".
+  for pkg in "platform-tools" "platforms;android-${LATEST_PLATFORM}" "build-tools;${LATEST_PLATFORM}.0.0" "cmake;3.10.2.4988404" "platforms;android-36" "build-tools;28.0.3"; do
     if "$SDKMANAGER" --list --sdk_root="$ANDROID_HOME" 2>/dev/null | grep -q "Installed.*$pkg" 2>/dev/null; then
       ok "Android $pkg already installed"
     else
@@ -361,6 +368,17 @@ fi
 header "Project dependencies"
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Flutter/Gradle write their build output straight into the project tree
+# (build/, android/.gradle) rather than anywhere covered by the SDK/cache
+# redirection above. On a small $HOME that output alone (Gradle's merged
+# native libs, per-flavor APKs, annotation processing, etc.) is enough to
+# fill the partition mid-build ("No space left on device"). Redirect it to
+# goinfre the same way as everything else, when goinfre is available.
+if [ -n "$GOINFRE_DIR" ]; then
+  redirect_to_goinfre "$PROJECT_DIR/build" "$GOINFRE_DIR/project-build/build"
+  redirect_to_goinfre "$PROJECT_DIR/android/.gradle" "$GOINFRE_DIR/project-build/android-.gradle"
+fi
 
 # Flutter pub get
 if [ -x "$FLUTTER_BIN" ]; then
