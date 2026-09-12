@@ -25,10 +25,35 @@ case "${SHELL##*/}" in
   *)    RCFILE="$HOME/.bashrc" ;;
 esac
 
+# install-deps.sh stores large installs on goinfre and leaves a symlink at the
+# $HOME path shown below — this removes both the symlink and its goinfre target,
+# not just the link.
+remove_path() {
+  local path="$1"
+  if [ -L "$path" ]; then
+    local target
+    target="$(readlink -f "$path" || true)"
+    rm -f "$path"
+    if [ -n "$target" ] && [ -e "$target" ]; then
+      rm -rf "$target"
+      ok "Removed $path (-> $target)"
+    else
+      ok "Removed $path"
+    fi
+  elif [ -e "$path" ]; then
+    rm -rf "$path"
+    ok "Removed $path"
+  else
+    info "$path not found — skipping"
+  fi
+}
+
 echo ""
-echo "  This will remove:"
+echo "  This will remove (including their goinfre target, if symlinked):"
 echo "    - ~/flutter          (Flutter SDK)"
 echo "    - ~/Android/Sdk      (Android SDK + cmdline-tools)"
+echo "    - ~/.gradle          (Gradle cache)"
+echo "    - ~/.pub-cache       (Dart/Flutter pub cache)"
 echo "    - ~/.local/bin/k6    (k6)"
 echo "    - ~/.local/jdk-17    (local JDK 17, if installed)"
 echo "    - PATH entries from $RCFILE"
@@ -38,13 +63,8 @@ read -r -p "Type 'y' to proceed: " ans
 
 header "Removing installed SDKs and tools"
 
-for dir in "$HOME/flutter" "$HOME/Android/Sdk" "$HOME/.local/jdk-17"; do
-  if [ -d "$dir" ]; then
-    rm -rf "$dir"
-    ok "Removed $dir"
-  else
-    info "$dir not found — skipping"
-  fi
+for dir in "$HOME/flutter" "$HOME/Android/Sdk" "$HOME/.local/jdk-17" "$HOME/.gradle" "$HOME/.pub-cache"; do
+  remove_path "$dir"
 done
 
 if [ -f "$HOME/.local/bin/k6" ]; then
