@@ -84,7 +84,15 @@ ensure_path() {
 # $home_path a symlink to it. A no-op once $home_path is already a symlink.
 redirect_to_goinfre() {
   local home_path="$1" goinfre_path="$2"
-  [ -L "$home_path" ] && return 0
+  if [ -L "$home_path" ]; then
+    # goinfre is local, per-machine scratch disk: it doesn't follow $HOME to
+    # a different physical workstation, and can be cleared between sessions.
+    # The symlink itself survives (it lives under $HOME) but its target can
+    # go missing, leaving a dangling link. Recreate the target so it's not
+    # pointing into a void — no need to touch the symlink itself.
+    [ -d "$goinfre_path" ] || ensure_dir "$goinfre_path"
+    return 0
+  fi
   if [ -d "$home_path" ]; then
     if [ -d "$goinfre_path" ]; then
       warn "$goinfre_path already exists — leaving $home_path as a real directory"

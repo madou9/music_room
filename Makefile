@@ -95,6 +95,7 @@ reset: ## Stop the stack and WIPE the database volume (destructive; FORCE=1 to s
 
 mobile: ## Run the mobile app in debug on a device (pub get + adb reverse + run)
 	@$(MAKE) --no-print-directory _ensure-device
+	@$(MAKE) --no-print-directory _ensure-build-dirs
 	$(FLUTTER) pub get
 	@$(MAKE) --no-print-directory _adb-reverse
 	@echo ">> Launching debug build on $(DEVICE). The app reaches $(API_URL) via adb reverse."
@@ -103,16 +104,19 @@ mobile: ## Run the mobile app in debug on a device (pub get + adb reverse + run)
 
 re-mobile: ## Re-run the mobile app in debug (skip pub get, reuse adb reverse)
 	@$(MAKE) --no-print-directory _ensure-device
+	@$(MAKE) --no-print-directory _ensure-build-dirs
 	@$(MAKE) --no-print-directory _adb-reverse
 	@echo ">> Relaunching on $(DEVICE)..."
 	$(FLUTTER) run -d $(DEVICE)
 
 apk: ## Build a debug APK and print its path
+	@$(MAKE) --no-print-directory _ensure-build-dirs
 	$(FLUTTER) build apk --debug
 	@echo ">> APK: $(APK_DEBUG)"
 	@echo ">> Install + launch on a device: make install"
 
 apk-release: ## Build a release APK and print its path
+	@$(MAKE) --no-print-directory _ensure-build-dirs
 	$(FLUTTER) build apk --release
 	@echo ">> APK: $(APK_RELEASE)"
 
@@ -129,12 +133,14 @@ devices: ## List connected Android devices (adb)
 ## ---- Web (browser) --------------------------------------------------------
 
 web: ## Run the web app in debug (headless web-server on WEB_PORT)
+	@$(MAKE) --no-print-directory _ensure-build-dirs
 	$(FLUTTER) pub get
 	@echo ">> Serving web debug at http://localhost:$(WEB_PORT)"
 	@echo "!! The server must allow this origin. Set ALLOWED_ORIGINS=http://localhost:$(WEB_PORT) in server/.env, then 'make re-server'."
 	$(FLUTTER) run -d web-server --web-port $(WEB_PORT)
 
 re-web: ## Re-run the web app in debug (skip pub get)
+	@$(MAKE) --no-print-directory _ensure-build-dirs
 	@echo ">> Serving web debug at http://localhost:$(WEB_PORT) (ensure ALLOWED_ORIGINS includes it)"
 	$(FLUTTER) run -d web-server --web-port $(WEB_PORT)
 
@@ -225,6 +231,20 @@ _load-run:
 
 _ensure-device:
 	@test -n "$(DEVICE)" || { echo "!! No Android device detected. Connect one (USB debugging on), check 'make devices', or pass DEVICE=<id>."; exit 1; }
+
+# build/ and android/.gradle may be symlinks onto goinfre (install-deps.sh).
+# goinfre is local, per-machine scratch disk — it doesn't follow $HOME to a
+# different workstation and can be cleared between sessions, so the symlink
+# can outlive its target. Recreate the target dir before Flutter/Gradle try
+# to write into it. No-op on a machine where these are plain directories.
+_ensure-build-dirs:
+	@for p in build android/.gradle; do \
+	  if [ -L "$$p" ] && [ ! -e "$$p" ]; then \
+	    t=$$(readlink "$$p"); \
+	    echo ">> $$p symlink target missing, recreating: $$t"; \
+	    mkdir -p "$$t"; \
+	  fi; \
+	done
 
 # Intentionally advisory (does not fail the build): a device on wifi adb or a
 # server reached by IP does not need the reverse, so a failure only warns.
