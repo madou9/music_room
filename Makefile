@@ -232,11 +232,7 @@ _load-run:
 _ensure-device:
 	@test -n "$(DEVICE)" || { echo "!! No Android device detected. Connect one (USB debugging on), check 'make devices', or pass DEVICE=<id>."; exit 1; }
 
-# build/ and android/.gradle may be symlinks onto goinfre (install-deps.sh).
-# goinfre is local, per-machine scratch disk — it doesn't follow $HOME to a
-# different workstation and can be cleared between sessions, so the symlink
-# can outlive its target. Recreate the target dir before Flutter/Gradle try
-# to write into it. No-op on a machine where these are plain directories.
+
 _ensure-build-dirs:
 	@for p in build android/.gradle; do \
 	  if [ -L "$$p" ] && [ ! -e "$$p" ]; then \
